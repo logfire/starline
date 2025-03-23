@@ -1,9 +1,3 @@
-/**
- * GitHub Stars Graph Worker
- *
- * Displays a graph of new GitHub stars over time for a specified repository.
- */
-
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
@@ -11,32 +5,29 @@ export default {
     try {
       // Handle stars page
       if (url.pathname === '/stars') {
-        const owner = url.searchParams.get('owner')
         const repo = url.searchParams.get('repo')
         const group = (url.searchParams.get('group') as 'day' | 'week' | 'month') || 'day'
 
-        if (!owner || !repo) {
-          return new Response('Owner and repo parameters are required', { status: 400 })
+        if (!repo) {
+          return new Response('Repo parameters is required', { status: 400 })
         }
 
-        const stars = await fetchStars(owner, repo, env)
+        const stars = await fetchStars(repo, env)
         const timeData = generateStarsOverTimeData(stars, group)
-        const html = generateHTML(owner, repo, timeData, group)
+        const html = generateHTML(repo, timeData, group)
 
         return new Response(html, {
           headers: {
             'Content-Type': 'text/html;charset=UTF-8',
           },
         })
+      } else {
+        return new Response(index(), {
+          headers: {
+            'Content-Type': 'text/html;charset=UTF-8',
+          },
+        })
       }
-
-      // Home page - show form
-      const formHtml = generateFormHTML()
-      return new Response(formHtml, {
-        headers: {
-          'Content-Type': 'text/html;charset=UTF-8',
-        },
-      })
     } catch (error) {
       console.error('Error:', error)
       return new Response(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`, { status: 500 })
@@ -48,8 +39,8 @@ interface ResponseData {
   starred_at: string
 }
 
-async function fetchStars(owner: string, repo: string, env: Env): Promise<Date[]> {
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/stargazers`
+async function fetchStars(repo: string, env: Env): Promise<Date[]> {
+  const apiUrl = `https://api.github.com/repos/${repo}/stargazers`
   const headers = new Headers({
     Accept: 'application/vnd.github.v3.star+json',
     'User-Agent': 'starline',
@@ -105,7 +96,7 @@ async function fetchStars(owner: string, repo: string, env: Env): Promise<Date[]
   }
 
   const concurrency = 10
-  console.log(`Fetching stars for ${owner}/${repo} with concurrency=${concurrency}...`)
+  console.log(`Fetching stars for ${repo} with concurrency=${concurrency}...`)
   const startTime = Date.now()
   await Promise.all([...Array(concurrency)].map(() => getPages()))
   const endTime = Date.now()
@@ -161,59 +152,24 @@ function dateTrunc(date: Date, interval: 'day' | 'week' | 'month'): Date {
   return grouped
 }
 
-function generateHTML(owner: string, repo: string, timeData: Point[], group: 'day' | 'week' | 'month'): string {
+function generateHTML(repo: string, timeData: Point[], group: 'day' | 'week' | 'month'): string {
   const totalStars = timeData.reduce((sum, day) => sum + day.count, 0)
   const chartData = JSON.stringify(timeData)
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GitHub Stars - ${owner}/${repo}</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-      max-width: 1000px;
-      margin: 0 auto;
-      padding: 20px;
-    }
-    h1 {
-      text-align: center;
-    }
-    .chart-container {
-      position: relative;
-      height: 400px;
-      width: 100%;
-    }
-    .repo-info {
-      text-align: center;
-      margin-bottom: 20px;
-    }
-  </style>
-</head>
-<body>
-  <h1>GitHub Stars Over Time</h1>
-  <div class="repo-info">
-    <h2>${owner}/${repo}</h2>
-    <p>Total Stars: ${totalStars}</p>
-  </div>
+  return htmlPage(
+    `GitHub Stars - ${repo}`,
+    `
+  <h1>GitHub Stars — ${repo}</h1>
   <div>
-    <a href="/">Back to Form</a>
+    <a href="/">Home</a>
   </div>
-  <div style="margin-top: 10px">
+  <div>Total Stars: ${totalStars}</div>
+  <div>
     <form action="/stars" method="get">
-    
       <div>
-        <label for="owner">Repository Owner:</label>
-        <input type="text" id="owner" name="owner" required value="${owner}">
-      </div>
-      <div>
-        <label for="repo">Repository Name:</label>
+        <label for="repo">Repository (owner/name):</label>
         <input type="text" id="repo" name="repo" required value="${repo}">
       </div>
-      <button type="submit">Update</button>
       <div>
         <label for="group">Group by</label>
         <select id="group" name="group">
@@ -227,7 +183,6 @@ function generateHTML(owner: string, repo: string, timeData: Point[], group: 'da
   <div class="chart-container">
     <canvas id="starsChart"></canvas>
   </div>
-
   <script>
     const timeData = ${chartData};
 
@@ -250,7 +205,7 @@ function generateHTML(owner: string, repo: string, timeData: Point[], group: 'da
         labels: labels,
         datasets: [
           {
-            label: 'New Stars Per Week',
+            label: 'New Stars per ${group}',
             data: counts,
             backgroundColor: 'rgba(54, 162, 235, 0.2)',
             borderColor: 'rgba(54, 162, 235, 1)',
@@ -301,83 +256,72 @@ function generateHTML(owner: string, repo: string, timeData: Point[], group: 'da
       }
     });
     // auto submit the form when group changes
-    document.getElementById('group').addEventListener('change', () => {
+    const submit = () => {
       document.querySelector('form').submit()
-    })
+    }
+    document.getElementById('repo').addEventListener('change', submit)
+    document.getElementById('group').addEventListener('change', submit)
   </script>
-</body>
-</html>`
+`,
+  )
 }
 
-function generateFormHTML(): string {
+const index = () =>
+  htmlPage(
+    'GitHub Stars',
+    `
+  <h1>GitHub Stars</h1>
+  <div>
+    <form action="/stars" method="get">
+      <div>
+        <label for="repo">Repository (owner/name):</label>
+        <input type="text" id="repo" name="repo"  placeholder="e.g., pydantic/pydantic-ai" required>
+      </div>
+      <div>
+        <label for="group">Group by</label>
+        <select id="group" name="group">
+          <option value="day">Day</option>
+          <option value="week">Week</option>
+          <option value="month">Month</option>
+        </select>
+      </div>
+      <button type="submit">Submit</button>
+    </form>
+  </div>`,
+  )
+
+function htmlPage(title: string, body: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GitHub Stars Graph</title>
+  <title>${title}</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-      max-width: 600px;
-      margin: 0 auto;
-      padding: 20px;
+      margin: 0;
+      padding: 10px 20px;
     }
     h1 {
-      text-align: center;
+      margin: 0;
     }
-    form {
-      display: flex;
-      flex-direction: column;
-      gap: 15px;
+    .chart-container {
+      max-width: 1200px;
     }
-    label {
-      font-weight: bold;
-    }
-    input {
+    input, select {
+      margin: 4px 0 8px;
       padding: 8px;
       border: 1px solid #ddd;
       border-radius: 4px;
-    }
-    button {
-      padding: 10px;
-      background-color: #0366d6;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 16px;
-    }
-    button:hover {
-      background-color: #0255b3;
-    }
-    .example {
-      margin-top: 20px;
-      color: #666;
+      width: 200px;
+      display: block;
     }
   </style>
 </head>
 <body>
-  <h1>GitHub Stars Graph</h1>
-  <form action="/stars" method="get">
-    <div>
-      <label for="owner">Repository Owner:</label>
-      <input type="text" id="owner" name="owner" required placeholder="e.g., pydantic">
-    </div>
-    <div>
-      <label for="repo">Repository Name:</label>
-      <input type="text" id="repo" name="repo" required placeholder="e.g., pydantic-ai">
-    </div>
-    <div>
-      <label for="group">Group by</label>
-      <select id="group" name="group">
-        <option value="day">Day</option>
-        <option value="week">Week</option>
-        <option value="month">Month</option>
-      </select>
-    </div>
-    <button type="submit">Generate Graph</button>
-  </form>
+  ${body}
 </body>
 </html>`
 }
