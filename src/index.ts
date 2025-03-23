@@ -75,7 +75,7 @@ async function fetchStars(repo: string, env: Env): Promise<[Date[], string]> {
       }
       const response = await fetch(url, { headers })
       if (response.status == 422) {
-        log('WARNING: GitHub API hit pagination limit, stopping')
+        log(`WARNING: GitHub API hit pagination limit, stopping (url: ${url})`)
         ongoing = false
         break
       }
