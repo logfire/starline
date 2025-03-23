@@ -49,17 +49,17 @@ function generateStarsOverTimeData(stars: StarData[]): { date: string; count: nu
   stars.sort((a, b) => new Date(a.starred_at).getTime() - new Date(b.starred_at).getTime())
 
   // Group stars by day
-  const starsByDay = new Map<string, number>()
+  const starLine = new Map<string, number>()
 
   for (const star of stars) {
     console.log({ star })
     const date = new Date(star.starred_at).toISOString().split('T')[0] // YYYY-MM-DD
-    const count = (starsByDay.get(date) || 0) + 1
-    starsByDay.set(date, count)
+    const count = (starLine.get(date) || 0) + 1
+    starLine.set(date, count)
   }
 
   // Convert to array of { date, count } objects
-  return Array.from(starsByDay.entries()).map(([date, count]) => ({ date, count }))
+  return Array.from(starLine.entries()).map(([date, count]) => ({ date, count }))
 }
 
 function generateHTML(owner: string, repo: string, timeData: { date: string; count: number }[]): string {
@@ -126,7 +126,7 @@ function generateHTML(owner: string, repo: string, timeData: { date: string; cou
         labels: labels,
         datasets: [
           {
-            label: 'New Stars',
+            label: 'New Stars Per Week',
             data: counts,
             backgroundColor: 'rgba(54, 162, 235, 0.2)',
             borderColor: 'rgba(54, 162, 235, 1)',
