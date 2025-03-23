@@ -12,9 +12,9 @@ export default {
           return new Response('Repo parameters is required', { status: 400 })
         }
 
-        const stars = await fetchStars(repo, env)
+        const [stars, log] = await fetchStars(repo, env)
         const timeData = generateStarsOverTimeData(stars, group)
-        const html = generateHTML(repo, timeData, group)
+        const html = generateHTML(repo, timeData, group, log)
 
         return new Response(html, {
           headers: {
@@ -39,7 +39,7 @@ interface ResponseData {
   starred_at: string
 }
 
-async function fetchStars(repo: string, env: Env): Promise<Date[]> {
+async function fetchStars(repo: string, env: Env): Promise<[Date[], string]> {
   const apiUrl = `https://api.github.com/repos/${repo}/stargazers`
   const headers = new Headers({
     Accept: 'application/vnd.github.v3.star+json',
@@ -53,6 +53,12 @@ async function fetchStars(repo: string, env: Env): Promise<Date[]> {
   let cached = 0
   let downloaded = 0
   let ongoing = true
+  const logLines: string[] = []
+
+  const log = (msg: string) => {
+    logLines.push(msg)
+    console.log(msg)
+  }
 
   async function getPages(): Promise<void> {
     while (ongoing) {
@@ -69,7 +75,7 @@ async function fetchStars(repo: string, env: Env): Promise<Date[]> {
       }
       const response = await fetch(url, { headers })
       if (response.status == 422) {
-        console.warn('GitHub API hit pagination limit, stopping')
+        log('WARNING: GitHub API hit pagination limit, stopping')
         ongoing = false
         break
       }
@@ -95,14 +101,14 @@ async function fetchStars(repo: string, env: Env): Promise<Date[]> {
     }
   }
 
-  const concurrency = 10
-  console.log(`Fetching stars for ${repo} with concurrency=${concurrency}...`)
+  const concurrency = 20
+  log(`Fetching stars for ${repo} with concurrency=${concurrency}...`)
   const startTime = Date.now()
   await Promise.all([...Array(concurrency)].map(() => getPages()))
   const endTime = Date.now()
-  console.log(`Fetched ${stars.length} stars in ${((endTime - startTime) / 1000).toFixed(2)} seconds`)
-  console.log(`cached ${cached} pages, downloaded ${downloaded} pages`)
-  return stars
+  log(`Fetched ${stars.length} stars in ${((endTime - startTime) / 1000).toFixed(2)} seconds`)
+  log(`pages cached ${cached}, pages downloaded ${downloaded}`)
+  return [stars, logLines.join('\n')]
 }
 
 function parseDate(dateString: string): Date {
@@ -152,7 +158,7 @@ function dateTrunc(date: Date, interval: 'day' | 'week' | 'month'): Date {
   return grouped
 }
 
-function generateHTML(repo: string, timeData: Point[], group: 'day' | 'week' | 'month'): string {
+function generateHTML(repo: string, timeData: Point[], group: 'day' | 'week' | 'month', log: string): string {
   const totalStars = timeData.reduce((sum, day) => sum + day.count, 0)
   const chartData = JSON.stringify(timeData)
 
@@ -182,6 +188,10 @@ function generateHTML(repo: string, timeData: Point[], group: 'day' | 'week' | '
   </div>
   <div class="chart-container">
     <canvas id="starsChart"></canvas>
+  </div>
+  <div>
+    <h3>Log</h3>
+    <pre>${log}</pre>
   </div>
   <script>
     const timeData = ${chartData};
