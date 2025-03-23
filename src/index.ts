@@ -4,65 +4,164 @@
  * Displays a graph of new GitHub stars over time for a specified repository.
  */
 
-interface StarData {
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url)
+
+    try {
+      // Handle stars page
+      if (url.pathname === '/stars') {
+        const owner = url.searchParams.get('owner')
+        const repo = url.searchParams.get('repo')
+        const group = (url.searchParams.get('group') as 'day' | 'week' | 'month') || 'day'
+
+        if (!owner || !repo) {
+          return new Response('Owner and repo parameters are required', { status: 400 })
+        }
+
+        const stars = await fetchStars(owner, repo, env)
+        const timeData = generateStarsOverTimeData(stars, group)
+        const html = generateHTML(owner, repo, timeData, group)
+
+        return new Response(html, {
+          headers: {
+            'Content-Type': 'text/html;charset=UTF-8',
+          },
+        })
+      }
+
+      // Home page - show form
+      const formHtml = generateFormHTML()
+      return new Response(formHtml, {
+        headers: {
+          'Content-Type': 'text/html;charset=UTF-8',
+        },
+      })
+    } catch (error) {
+      console.error('Error:', error)
+      return new Response(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`, { status: 500 })
+    }
+  },
+} satisfies ExportedHandler<Env>
+
+interface ResponseData {
   starred_at: string
 }
 
-async function fetchStars(owner: string, repo: string, env: Env): Promise<StarData[]> {
+async function fetchStars(owner: string, repo: string, env: Env): Promise<Date[]> {
   const apiUrl = `https://api.github.com/repos/${owner}/${repo}/stargazers`
   const headers = new Headers({
     Accept: 'application/vnd.github.v3.star+json',
     'User-Agent': 'starline',
+    Authorization: `token ${env.GITHUB_TOKEN}`,
   })
 
-  // Add authorization header if GitHub API key is available
-  if (env.GITHUB_TOKEN) {
-    headers.set('Authorization', `token ${env.GITHUB_TOKEN}`)
-  }
+  const stars: Date[] = []
+  const extend = (rawStars: string[]) => stars.push(...rawStars.map(parseDate))
+  let page = 0
+  let cached = 0
+  let downloaded = 0
+  let ongoing = true
 
-  const stars: StarData[] = []
-  let page = 1
-  let hasMorePages = true
-
-  while (hasMorePages) {
-    const response = await fetch(`${apiUrl}?page=${page}&per_page=100`, { headers })
-
-    if (!response.ok) {
-      const text = await response.text()
-      throw new Error(`GitHub API error: ${response.status}`)
-    }
-
-    const data = await response.json<StarData[]>()
-    if (data.length === 0) {
-      hasMorePages = false
-    } else {
-      stars.push(...data)
+  async function getPages(): Promise<void> {
+    while (ongoing) {
       page++
+      const url = `${apiUrl}?page=${page}&per_page=100`
+      let cachedRawStars = await env.GITHUB_CACHE.get<string[]>(url, 'json')
+      if (cachedRawStars) {
+        cached++
+        extend(cachedRawStars)
+        continue
+      }
+      if (!ongoing) {
+        break
+      }
+      const response = await fetch(url, { headers })
+      if (response.status == 422) {
+        console.warn('GitHub API hit pagination limit, stopping')
+        ongoing = false
+        break
+      }
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(`GitHub API error: GET ${url} -> ${response.status}, response:\n${text}`)
+      }
+      // console.log('headers:', Object.fromEntries(response.headers.entries()))
+
+      const data = await response.json<ResponseData[]>()
+      if (data.length === 0) {
+        ongoing = false
+      } else {
+        downloaded++
+        const rawStars = data.map(({ starred_at }) => starred_at)
+        if (rawStars.length === 100) {
+          await env.GITHUB_CACHE.put(url, JSON.stringify(rawStars), {
+            expirationTtl: 86400 * 30, // 30 days
+          })
+        }
+        extend(rawStars)
+      }
     }
   }
 
+  const concurrency = 10
+  console.log(`Fetching stars for ${owner}/${repo} with concurrency=${concurrency}...`)
+  const startTime = Date.now()
+  await Promise.all([...Array(concurrency)].map(() => getPages()))
+  const endTime = Date.now()
+  console.log(`Fetched ${stars.length} stars in ${((endTime - startTime) / 1000).toFixed(2)} seconds`)
+  console.log(`cached ${cached} pages, downloaded ${downloaded} pages`)
   return stars
 }
 
-function generateStarsOverTimeData(stars: StarData[]): { date: string; count: number }[] {
+function parseDate(dateString: string): Date {
+  const d = new Date(dateString)
+  if (isNaN(d.getTime())) {
+    throw new Error(`Invalid date string: ${dateString}`)
+  }
+  return d
+}
+
+interface Point {
+  date: string
+  count: number
+}
+
+function generateStarsOverTimeData(stars: Date[], group: 'day' | 'week' | 'month'): Point[] {
   // Sort stars by date
-  stars.sort((a, b) => new Date(a.starred_at).getTime() - new Date(b.starred_at).getTime())
+  stars.sort((a, b) => a.getTime() - b.getTime())
 
   // Group stars by day
   const starLine = new Map<string, number>()
 
-  for (const star of stars) {
-    console.log({ star })
-    const date = new Date(star.starred_at).toISOString().split('T')[0] // YYYY-MM-DD
-    const count = (starLine.get(date) || 0) + 1
-    starLine.set(date, count)
+  for (const starDate of stars) {
+    const date = dateTrunc(starDate, group)
+    const key = date.toISOString().split('T')[0] // YYYY-MM-DD
+    const count = (starLine.get(key) || 0) + 1
+    starLine.set(key, count)
   }
 
   // Convert to array of { date, count } objects
-  return Array.from(starLine.entries()).map(([date, count]) => ({ date, count }))
+  const line = Array.from(starLine.entries()).map(([date, count]) => ({ date, count }))
+  // remove the last entry
+  line.pop()
+  return line
 }
 
-function generateHTML(owner: string, repo: string, timeData: { date: string; count: number }[]): string {
+function dateTrunc(date: Date, interval: 'day' | 'week' | 'month'): Date {
+  const grouped = new Date(date)
+  grouped.setHours(0, 0, 0, 0)
+  if (interval === 'month') {
+    grouped.setDate(1)
+  } else if (interval === 'week') {
+    const day = date.getDay() // Get the current day of the week (0 for Sunday, 1 for Monday, etc.)
+    const diff = (day === 0 ? -6 : 1) - day // Calculate difference to nearest Monday
+    grouped.setDate(date.getDate() + diff)
+  }
+  return grouped
+}
+
+function generateHTML(owner: string, repo: string, timeData: Point[], group: 'day' | 'week' | 'month'): string {
   const totalStars = timeData.reduce((sum, day) => sum + day.count, 0)
   const chartData = JSON.stringify(timeData)
 
@@ -99,6 +198,31 @@ function generateHTML(owner: string, repo: string, timeData: { date: string; cou
   <div class="repo-info">
     <h2>${owner}/${repo}</h2>
     <p>Total Stars: ${totalStars}</p>
+  </div>
+  <div>
+    <a href="/">Back to Form</a>
+  </div>
+  <div style="margin-top: 10px">
+    <form action="/stars" method="get">
+    
+      <div>
+        <label for="owner">Repository Owner:</label>
+        <input type="text" id="owner" name="owner" required value="${owner}">
+      </div>
+      <div>
+        <label for="repo">Repository Name:</label>
+        <input type="text" id="repo" name="repo" required value="${repo}">
+      </div>
+      <button type="submit">Update</button>
+      <div>
+        <label for="group">Group by</label>
+        <select id="group" name="group">
+          <option value="day"${group == 'day' ? ' selected' : ''}>Day</option>
+          <option value="week"${group == 'week' ? ' selected' : ''}>Week</option>
+          <option value="month"${group == 'month' ? ' selected' : ''}>Month</option>
+        </select>
+      </div>
+    </form>
   </div>
   <div class="chart-container">
     <canvas id="starsChart"></canvas>
@@ -176,6 +300,10 @@ function generateHTML(owner: string, repo: string, timeData: { date: string; cou
         }
       }
     });
+    // auto submit the form when group changes
+    document.getElementById('group').addEventListener('change', () => {
+      document.querySelector('form').submit()
+    })
   </script>
 </body>
 </html>`
@@ -234,58 +362,22 @@ function generateFormHTML(): string {
   <form action="/stars" method="get">
     <div>
       <label for="owner">Repository Owner:</label>
-      <input type="text" id="owner" name="owner" required placeholder="e.g., facebook">
+      <input type="text" id="owner" name="owner" required placeholder="e.g., pydantic">
     </div>
     <div>
       <label for="repo">Repository Name:</label>
-      <input type="text" id="repo" name="repo" required placeholder="e.g., react">
+      <input type="text" id="repo" name="repo" required placeholder="e.g., pydantic-ai">
+    </div>
+    <div>
+      <label for="group">Group by</label>
+      <select id="group" name="group">
+        <option value="day">Day</option>
+        <option value="week">Week</option>
+        <option value="month">Month</option>
+      </select>
     </div>
     <button type="submit">Generate Graph</button>
   </form>
-  <div class="example">
-    <p>Example: To see stars for github.com/cloudflare/workers-sdk</p>
-    <p>Owner: cloudflare</p>
-    <p>Repository: workers-sdk</p>
-  </div>
 </body>
 </html>`
 }
-
-export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const url = new URL(request.url)
-
-    try {
-      // Handle stars page
-      if (url.pathname === '/stars') {
-        const owner = url.searchParams.get('owner')
-        const repo = url.searchParams.get('repo')
-
-        if (!owner || !repo) {
-          return new Response('Owner and repo parameters are required', { status: 400 })
-        }
-
-        const stars = await fetchStars(owner, repo, env)
-        const timeData = generateStarsOverTimeData(stars)
-        const html = generateHTML(owner, repo, timeData)
-
-        return new Response(html, {
-          headers: {
-            'Content-Type': 'text/html;charset=UTF-8',
-          },
-        })
-      }
-
-      // Home page - show form
-      const formHtml = generateFormHTML()
-      return new Response(formHtml, {
-        headers: {
-          'Content-Type': 'text/html;charset=UTF-8',
-        },
-      })
-    } catch (error) {
-      console.error('Error:', error)
-      return new Response(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`, { status: 500 })
-    }
-  },
-} satisfies ExportedHandler<Env>
