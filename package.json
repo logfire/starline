@@ -20,14 +20,11 @@
       "prettier-plugin-toml"
     ]
   },
-  "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.7.5",
+  "dependencies": {
     "@cloudflare/workers-types": "^4.20250321.0",
+    "prettier": "^3.5.3",
+    "prettier-plugin-toml": "^2.0.2",
     "typescript": "^5.5.2",
     "wrangler": "^4.4.0"
-  },
-  "dependencies": {
-    "prettier": "^3.5.3",
-    "prettier-plugin-toml": "^2.0.2"
   }
 }
