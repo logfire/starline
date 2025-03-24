@@ -2,35 +2,29 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
 
-    try {
-      // Handle stars page
-      if (url.pathname === '/stars') {
-        const repo = url.searchParams.get('repo')
-        const group = (url.searchParams.get('group') as 'day' | 'week' | 'month') || 'day'
+    if (url.pathname === '/stars') {
+      const repo = url.searchParams.get('repo')
+      const group = (url.searchParams.get('group') as 'day' | 'week' | 'month') || 'day'
 
-        if (!repo) {
-          return new Response('Repo parameters is required', { status: 400 })
-        }
-
-        const [stars, log] = await fetchStars(repo, env)
-        const timeData = generateStarsOverTimeData(stars, group)
-        const html = generateHTML(repo, timeData, group, log)
-
-        return new Response(html, {
-          headers: {
-            'Content-Type': 'text/html;charset=UTF-8',
-          },
-        })
-      } else {
-        return new Response(index(), {
-          headers: {
-            'Content-Type': 'text/html;charset=UTF-8',
-          },
-        })
+      if (!repo) {
+        return new Response('Repo parameters is required', { status: 400 })
       }
-    } catch (error) {
-      console.error('Error:', error)
-      return new Response(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`, { status: 500 })
+
+      const [stars, log] = await fetchStars(repo, env)
+      const timeData = generateStarsOverTimeData(stars, group)
+      const html = generateHTML(repo, timeData, group, log)
+
+      return new Response(html, {
+        headers: {
+          'Content-Type': 'text/html;charset=UTF-8',
+        },
+      })
+    } else {
+      return new Response(index(), {
+        headers: {
+          'Content-Type': 'text/html;charset=UTF-8',
+        },
+      })
     }
   },
 } satisfies ExportedHandler<Env>
