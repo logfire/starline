@@ -1,4 +1,6 @@
-export default {
+import { instrument } from '@pydantic/logfire-cf-workers';
+
+const handler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
 
@@ -28,6 +30,10 @@ export default {
     }
   },
 } satisfies ExportedHandler<Env>
+
+export default instrument(handler, {
+  serviceName: 'starline',
+});
 
 interface ResponseData {
   starred_at: string
