@@ -1,3 +1,4 @@
+import * as logfire from '@pydantic/logfire-api'
 import { instrument } from '@pydantic/logfire-cf-workers';
 
 const handler = {
@@ -5,6 +6,7 @@ const handler = {
     const url = new URL(request.url)
 
     if (url.pathname === '/stars') {
+      logfire.info('search params {search}', {search: url.searchParams})
       const repo = url.searchParams.get('repo')
       const group = (url.searchParams.get('group') as 'day' | 'week' | 'month') || 'day'
 
@@ -57,7 +59,7 @@ async function fetchStars(repo: string, env: Env): Promise<[Date[], string]> {
 
   const log = (msg: string) => {
     logLines.push(msg)
-    console.log(msg)
+    logfire.info('fetch log: {msg}', { msg })
   }
 
   async function getPages(): Promise<void> {
@@ -74,6 +76,9 @@ async function fetchStars(repo: string, env: Env): Promise<[Date[], string]> {
         break
       }
       const response = await fetch(url, { headers })
+      if (!ongoing) {
+        break
+      }
       if (response.status == 422) {
         log(`WARNING: GitHub API hit pagination limit, stopping (url: ${url})`)
         ongoing = false
@@ -83,7 +88,6 @@ async function fetchStars(repo: string, env: Env): Promise<[Date[], string]> {
         const text = await response.text()
         throw new Error(`GitHub API error: GET ${url} -> ${response.status}, response:\n${text}`)
       }
-      // console.log('headers:', Object.fromEntries(response.headers.entries()))
 
       const data = await response.json<ResponseData[]>()
       if (data.length === 0) {
