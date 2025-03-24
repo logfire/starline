@@ -2,5 +2,9 @@
 name = "starline"
 main = "src/index.ts"
 compatibility_date = "2025-03-21"
+compatibility_flags = [ "nodejs_compat" ]
 
 kv_namespaces = [{ binding = "GITHUB_CACHE", id = "6580f0888b6f4216b0dc20812a5b61b0" }]
+
+[env]
+ENVIRONMENT = "prod"
